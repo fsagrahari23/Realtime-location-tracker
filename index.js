@@ -1,30 +1,41 @@
-const express = require('express');
-const app=express();
-const http = require('http');
-const server = http.createServer(app)
-const socketio = require('socket.io');
+const express = require("express");
+const http = require("http");
+const socketio = require("socket.io");
+const path = require("path");
+
+const app = express();
+const server = http.createServer(app);
 const io = socketio(server);
-const path = require('path');
 
 const port = 4000;
 
-app.set("view engine","ejs");
-app.set(express.static(path.join(__dirname,"public")));
+app.set("view engine", "ejs");
+app.use(express.static(path.join(__dirname, "public")));
 
-io.on("connection",(socket)=>{
-    socket.on('location',(data)=>{
- 
-      io.emit("receive",{id: socket.id , ...data})
-    })
-    socket.on("disconnect",()=>{
-      io.emit("user-disconnect",socket.id);
-    })
-     console.log("connected");
-}
-)
+io.on("connection", (socket) => {
+  console.log("User connected:", socket.id);
 
-app.get("/",(req,res)=>{
-  res.render("index.ejs")
-})
+  socket.on("join-room", (roomId) => {
+    socket.join(roomId);
+    console.log(`User ${socket.id} joined room ${roomId}`);
+  });
 
-server.listen(port);
+  socket.on("location", (data) => {
+    const { roomId, latitude, longitude } = data;
+    console.log(`User ${socket.id} sent location (${latitude}, ${longitude})`);
+    socket.to(roomId).emit("receive-location", { latitude, longitude });
+  });
+
+  socket.on("disconnect", () => {
+    io.emit("user-disconnect", socket.id);
+    console.log("User disconnected:", socket.id);
+  });
+});
+
+app.get("/", (req, res) => {
+  res.render("index");
+});
+
+server.listen(port, () => {
+  console.log(`Server running on http://localhost:${port}`);
+});

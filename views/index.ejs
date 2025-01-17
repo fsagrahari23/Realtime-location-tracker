@@ -43,44 +43,95 @@
     ></script>
     <script>
       const socket = io();
-      if (navigator.geolocation) {
-        navigator.geolocation.watchPosition(
-          (position) => {
-            const { latitude, longitude } = position.coords;
-            socket.emit("location", { latitude, longitude });
-          },
-          (err) => console.log(err)
-        ),
-          {
-            enableHighAccuracy: true,
-            timeout: 15000,
-            maximumAge: 0,
-          };
-      }
-      const map = L.map("map").setView([0, 0], 26);
+      const roomId = prompt("Enter Room ID:"); // Prompt user to join a room
+      socket.emit("join-room", roomId);
+
+      let myMarker, otherMarker, routeLayer;
+      const map = L.map("map").setView([0, 0], 13);
 
       L.tileLayer("http://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         attribution: "OpenStreetMap",
       }).addTo(map);
 
-      const markers = {};
+      if (navigator.geolocation) {
+        navigator.geolocation.watchPosition(
+          (position) => {
+            let { latitude, longitude } = position.coords;
+            latitude = latitude + 0.01;
+            socket.emit("location", { roomId, latitude, longitude });
 
-      socket.on("receive", (data) => {
-        const { id, latitude, longitude } = data;
+            if (!myMarker) {
+              myMarker = L.marker([latitude, longitude]).addTo(map);
+              map.setView([latitude, longitude], 13);
+            } else {
+              myMarker.setLatLng([latitude, longitude]);
+            }
+          },
+          (err) => console.log(err),
+          {
+            enableHighAccuracy: true,
+            timeout: 15000,
+            maximumAge: 0,
+          }
+        );
+      }
 
-        map.setView([latitude, longitude], 26);
-        if (markers[id]) {
-          markers[id].setLatLng([latitude, longitude]);
+      socket.on("receive-location", async (data) => {
+        const { latitude, longitude } = data;
+
+        if (!otherMarker) {
+          otherMarker = L.marker([latitude, longitude], {
+            color: "blue",
+          }).addTo(map);
         } else {
-          markers[id] = L.marker([latitude, longitude]).addTo(map);
+          otherMarker.setLatLng([latitude, longitude]);
+        }
+
+        // Fetch route between the two users
+        if (myMarker && otherMarker) {
+          const myLatLng = myMarker.getLatLng();
+          const otherLatLng = otherMarker.getLatLng();
+
+          const routeData = await fetchRoute(
+            myLatLng.lat,
+            myLatLng.lng,
+            otherLatLng.lat,
+            otherLatLng.lng
+          );
+
+          if (routeLayer) {
+            map.removeLayer(routeLayer);
+          }
+
+          // Add the route as a layer on the map
+          routeLayer = L.geoJSON(routeData, {
+            style: {
+              color: "red",
+              weight: 4,
+            },
+          }).addTo(map);
         }
       });
-      socket.on("user-disconnect", (id) => {
-        if (markers[id]) {
-          map.removeLayer(markers[id]);
-          delete markers[id];
+
+      socket.on("user-disconnect", () => {
+        if (otherMarker) {
+          map.removeLayer(otherMarker);
+          otherMarker = null;
+        }
+        if (routeLayer) {
+          map.removeLayer(routeLayer);
+          routeLayer = null;
         }
       });
+
+      // Fetch route using OSRM API
+      async function fetchRoute(lat1, lon1, lat2, lon2) {
+        const url = `https://router.project-osrm.org/route/v1/driving/${lon1},${lat1};${lon2},${lat2}?overview=full&geometries=geojson`;
+        const response = await fetch(url);
+        const data = await response.json();
+
+        return data.routes[0].geometry; // Return GeoJSON route geometry
+      }
     </script>
   </body>
 </html>
