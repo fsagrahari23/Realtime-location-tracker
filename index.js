@@ -18,12 +18,23 @@ io.on("connection", (socket) => {
   socket.on("join-room", (roomId) => {
     socket.join(roomId);
     console.log(`User ${socket.id} joined room ${roomId}`);
+    io.to(roomId).emit("user-joined", socket.id); // Notify room of new user
   });
 
   socket.on("location", (data) => {
     const { roomId, latitude, longitude } = data;
     console.log(`User ${socket.id} sent location (${latitude}, ${longitude})`);
-    socket.to(roomId).emit("receive-location", { latitude, longitude });
+    io.to(roomId).emit("receive-location", {
+      socketId: socket.id,
+      latitude,
+      longitude,
+    });
+  });
+
+  socket.on("message", (data) => {
+    const { roomId, message } = data;
+    console.log(`Message in room ${roomId}: ${message}`);
+    io.to(roomId).emit("receive-message", { socketId: socket.id, message });
   });
 
   socket.on("disconnect", () => {

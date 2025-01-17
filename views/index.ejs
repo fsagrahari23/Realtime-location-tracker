@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Document</title>
+    <title>Realtime Tracker</title>
     <style>
       * {
         margin: 0;
@@ -15,10 +15,81 @@
       body {
         height: 100%;
         width: 100%;
+        font-family: Arial, sans-serif;
       }
-      #map {
+
+      .container {
+        display: flex;
         height: 100%;
         width: 100%;
+        background-color: #f5f5f5;
+      }
+
+      #map {
+        flex: 3;
+        height: 100%;
+      }
+
+      #chat-container {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        background-color: #ffffff;
+        border-left: 1px solid #ccc;
+        padding: 10px;
+      }
+
+      #chat-header {
+        font-size: 18px;
+        font-weight: bold;
+        margin-bottom: 10px;
+        text-align: center;
+        background-color: #007bff;
+        color: white;
+        padding: 10px;
+        border-radius: 4px;
+      }
+
+      #chat-box {
+        flex: 1;
+        overflow-y: auto;
+        border: 1px solid #ccc;
+        margin-bottom: 10px;
+        padding: 10px;
+        background-color: #f9f9f9;
+        border-radius: 4px;
+      }
+
+      #chat-box p {
+        margin-bottom: 8px;
+        font-size: 14px;
+      }
+
+      #chat-input-container {
+        display: flex;
+        gap: 10px;
+      }
+
+      #chat-input {
+        flex: 1;
+        padding: 10px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        font-size: 14px;
+      }
+
+      #send-message {
+        padding: 10px 15px;
+        border: none;
+        background-color: #007bff;
+        color: white;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 14px;
+      }
+
+      #send-message:hover {
+        background-color: #0056b3;
       }
     </style>
     <link
@@ -29,7 +100,18 @@
     />
   </head>
   <body>
-    <div id="map"></div>
+    <div class="container">
+      <div id="map"></div>
+      <div id="chat-container">
+        <div id="chat-header">Chat</div>
+        <div id="chat-box"></div>
+        <div id="chat-input-container">
+          <input id="chat-input" type="text" placeholder="Type a message..." />
+          <button id="send-message">Send</button>
+        </div>
+      </div>
+    </div>
+
     <script
       src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
       integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
@@ -41,17 +123,38 @@
       integrity="sha384-2huaZvOR9iDzHqslqwpR87isEmrfxqyWOF7hr7BY6KG0+hVKLoEXMPUJw3ynWuhO"
       crossorigin="anonymous"
     ></script>
+
     <script>
       const socket = io();
-      const roomId = prompt("Enter Room ID:"); // Prompt user to join a room
+      const roomId = prompt("Enter Room ID:");
       socket.emit("join-room", roomId);
 
-      let myMarker, otherMarker, routeLayer;
+      let myMarker,
+        otherMarkers = {},
+        routeLayers = {};
       const map = L.map("map").setView([0, 0], 13);
 
       L.tileLayer("http://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         attribution: "OpenStreetMap",
       }).addTo(map);
+
+      const chatBox = document.getElementById("chat-box");
+      const chatInput = document.getElementById("chat-input");
+      const sendMessageButton = document.getElementById("send-message");
+
+      sendMessageButton.addEventListener("click", () => {
+        const message = chatInput.value.trim();
+        if (message) {
+          socket.emit("message", { roomId, message });
+          chatInput.value = "";
+        }
+      });
+
+      socket.on("receive-message", (data) => {
+        const { socketId, message } = data;
+        chatBox.innerHTML += `<p><strong>${socketId}:</strong> ${message}</p>`;
+        chatBox.scrollTop = chatBox.scrollHeight; // Scroll to the bottom
+      });
 
       if (navigator.geolocation) {
         navigator.geolocation.watchPosition(
@@ -76,20 +179,17 @@
       }
 
       socket.on("receive-location", async (data) => {
-        const { latitude, longitude } = data;
+        const { socketId, latitude, longitude } = data;
 
-        if (!otherMarker) {
-          otherMarker = L.marker([latitude, longitude], {
-            color: "blue",
-          }).addTo(map);
+        if (!otherMarkers[socketId]) {
+          otherMarkers[socketId] = L.marker([latitude, longitude]).addTo(map);
         } else {
-          otherMarker.setLatLng([latitude, longitude]);
+          otherMarkers[socketId].setLatLng([latitude, longitude]);
         }
 
-        // Fetch route between the two users
-        if (myMarker && otherMarker) {
+        if (myMarker && otherMarkers[socketId]) {
           const myLatLng = myMarker.getLatLng();
-          const otherLatLng = otherMarker.getLatLng();
+          const otherLatLng = otherMarkers[socketId].getLatLng();
 
           const routeData = await fetchRoute(
             myLatLng.lat,
@@ -98,37 +198,31 @@
             otherLatLng.lng
           );
 
-          if (routeLayer) {
-            map.removeLayer(routeLayer);
+          if (routeLayers[socketId]) {
+            map.removeLayer(routeLayers[socketId]);
           }
 
-          // Add the route as a layer on the map
-          routeLayer = L.geoJSON(routeData, {
-            style: {
-              color: "red",
-              weight: 4,
-            },
+          routeLayers[socketId] = L.geoJSON(routeData, {
+            style: { color: "red", weight: 4 },
           }).addTo(map);
         }
       });
 
-      socket.on("user-disconnect", () => {
-        if (otherMarker) {
-          map.removeLayer(otherMarker);
-          otherMarker = null;
+      socket.on("user-disconnect", (socketId) => {
+        if (otherMarkers[socketId]) {
+          map.removeLayer(otherMarkers[socketId]);
+          delete otherMarkers[socketId];
         }
-        if (routeLayer) {
-          map.removeLayer(routeLayer);
-          routeLayer = null;
+        if (routeLayers[socketId]) {
+          map.removeLayer(routeLayers[socketId]);
+          delete routeLayers[socketId];
         }
       });
 
-      // Fetch route using OSRM API
       async function fetchRoute(lat1, lon1, lat2, lon2) {
         const url = `https://router.project-osrm.org/route/v1/driving/${lon1},${lat1};${lon2},${lat2}?overview=full&geometries=geojson`;
         const response = await fetch(url);
         const data = await response.json();
-
         return data.routes[0].geometry; // Return GeoJSON route geometry
       }
     </script>
