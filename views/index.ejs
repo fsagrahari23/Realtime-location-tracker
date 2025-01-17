@@ -57,7 +57,6 @@
         navigator.geolocation.watchPosition(
           (position) => {
             let { latitude, longitude } = position.coords;
-            latitude = latitude + 0.01;
             socket.emit("location", { roomId, latitude, longitude });
 
             if (!myMarker) {
